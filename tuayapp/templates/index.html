@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tuya — мониторинг реле</title><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+:root{color-scheme:dark;--bg:#0b1120;--panel:#131d30;--line:#26364e;--muted:#94a7c2;--text:#edf4ff}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#172746 0,var(--bg) 58%);font:15px system-ui,sans-serif;color:var(--text)}
+main{max-width:1440px;margin:auto;padding:28px 20px 50px}.top{display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}
+.eyebrow{color:#68a8ff;text-transform:uppercase;letter-spacing:.14em;font-size:12px;font-weight:700}h1{font-size:clamp(26px,4vw,38px);margin:6px 0}p,.muted{color:var(--muted)}
+.controls{display:flex;gap:10px;flex-wrap:wrap;margin:24px 0}.btn{border:1px solid var(--line);border-radius:12px;padding:11px 15px;font-weight:700;cursor:pointer;color:white;background:#26364e}.btn:disabled{opacity:.5;cursor:wait}.on{background:#0c624b;border-color:#168a68}.off{background:#742c3b;border-color:#a73a4c}.refresh{background:#1c3354}
+.summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:18px}.stat,.device{background:linear-gradient(145deg,#16233a,#101a2b);border:1px solid var(--line);border-radius:18px;padding:18px}.stat small{color:var(--muted)}.big{font-size:27px;font-weight:750;margin-top:5px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.devicehead,.switchrow{display:flex;justify-content:space-between;gap:12px;align-items:center}.device h2{font-size:19px;margin:0}.pill{font-size:12px;border-radius:999px;padding:5px 9px;background:#28364b;color:#b6c5da;white-space:nowrap}.pill.ok{background:#124b3e;color:#8ff0ce}.pill.bad{background:#552632;color:#ffb1bb}.switchrow{margin:16px 0}.switchrow button{padding:8px 12px;border-radius:10px}.metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.metric{background:#0d1728;border:1px solid #223149;border-radius:12px;padding:11px}.metric small{display:block;color:var(--muted);font-size:12px}.metric strong{display:block;margin-top:4px;font-size:17px}.chartbox{height:210px;margin-top:12px}.charttitle{font-size:13px;color:var(--muted);margin-top:18px}.error{color:#ff9aa6;font-size:12px;margin-top:10px;overflow-wrap:anywhere}.note{margin-top:18px;padding:14px;border:1px solid var(--line);border-radius:12px;color:var(--muted);font-size:13px}.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#26364e;padding:12px 18px;border-radius:12px;box-shadow:0 8px 35px #0008;display:none;max-width:90%;z-index:5}
+@media(max-width:800px){.grid,.summary{grid-template-columns:1fr}.big{font-size:23px}}@media(max-width:440px){main{padding:20px 12px}.device{padding:14px}.metric strong{font-size:15px}.btn{flex:1}}
+</style></head><body><main>
+<header class="top"><div><div class="eyebrow">Smart home · Tuya Cloud</div><h1>Мониторинг реле</h1><p>Пять устройств · управление и история показаний</p></div><div class="muted" id="updated">Загрузка данных…</div></header>
+<section class="controls"><button class="btn on" onclick="switchAll(true)">Включить все 5</button><button class="btn off" onclick="switchAll(false)">Выключить все 5</button><button class="btn refresh" onclick="loadData()">↻ Обновить</button></section>
+<section class="summary"><div class="stat"><small>Устройства на связи</small><div class="big" id="onlineCount">— / 5</div></div><div class="stat"><small>Сейчас включено</small><div class="big" id="onCount">—</div></div><div class="stat"><small>Суммарная мощность</small><div class="big" id="totalPower">— Вт</div></div></section>
+<section class="grid" id="devices"></section>
+<div class="note">Графики накапливают последние 30 измерений в открытой вкладке. После перезагрузки страницы история сбрасывается. Реальные datapoint-коды и масштабы зависят от модели реле.</div>
+</main><div class="toast" id="toast"></div>
+<script>
+const historyData={},charts={};let busy=false;
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function fmt(v,d=2){return v===null||v===undefined||!Number.isFinite(Number(v))?'—':Number(v).toLocaleString('ru-RU',{maximumFractionDigits:d});}
+function toast(s){const e=document.getElementById('toast');e.textContent=s;e.style.display='block';clearTimeout(toast.timer);toast.timer=setTimeout(()=>e.style.display='none',5000);}
+function makeCards(ds){document.getElementById('devices').innerHTML=ds.map((d,i)=>`<article class="device"><div class="devicehead"><h2>${esc(d.name||'Реле '+(i+1))}</h2><span class="pill ${d.online?'ok':'bad'}">${d.online?'На связи':'Нет связи'}</span></div>
+<div class="switchrow"><span>${d.switch===true?'Реле включено':d.switch===false?'Реле выключено':'Состояние неизвестно'}</span><div><button class="btn on" ${!d.online?'disabled':''} onclick="switchOne(${i},true)">Вкл</button> <button class="btn off" ${!d.online?'disabled':''} onclick="switchOne(${i},false)">Выкл</button></div></div>
+<div class="metrics"><div class="metric"><small>Мощность</small><strong>${fmt(d.metrics?.power)} Вт</strong></div><div class="metric"><small>Ток</small><strong>${fmt(d.metrics?.current,3)} А</strong></div><div class="metric"><small>Напряжение</small><strong>${fmt(d.metrics?.voltage)} В</strong></div></div>
+<div class="charttitle">История измерений · последние 30 точек</div><div class="chartbox"><canvas id="chart-${i}"></canvas></div>${d.error?'<div class="error">'+esc(d.error)+'</div>':''}</article>`).join('');
+ds.forEach((d,i)=>makeChart(i));}
+function makeChart(i){const c=document.getElementById('chart-'+i);if(!c)return;if(charts[i])charts[i].destroy();const h=historyData[i]||[];
+charts[i]=new Chart(c,{type:'line',data:{labels:h.map(x=>x.t),datasets:[
+{label:'Мощность, Вт',data:h.map(x=>x.power),borderColor:'#68a8ff',pointRadius:0,tension:.25,spanGaps:true},
+{label:'Ток, А',data:h.map(x=>x.current),borderColor:'#35d49a',pointRadius:0,tension:.25,spanGaps:true},
+{label:'Напряжение, В',data:h.map(x=>x.voltage),borderColor:'#ffbd69',pointRadius:0,tension:.25,spanGaps:true}]},
+options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{labels:{color:'#b6c5da',boxWidth:10,font:{size:11}}}},scales:{x:{ticks:{color:'#8295b1',maxTicksLimit:5},grid:{color:'#223149'}},y:{beginAtZero:true,ticks:{color:'#8295b1',maxTicksLimit:5},grid:{color:'#223149'}}}}});}
+function addHistory(ds){const t=new Date().toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'});ds.forEach((d,i)=>{(historyData[i]??=[]).push({t,power:d.metrics?.power??null,current:d.metrics?.current??null,voltage:d.metrics?.voltage??null});if(historyData[i].length>30)historyData[i].shift();});}
+async function loadData(){if(busy)return;busy=true;try{const r=await fetch('/api/devices',{cache:'no-store'}),data=await r.json();if(!r.ok)throw Error(data.error||'Ошибка получения данных');addHistory(data.devices);makeCards(data.devices);
+document.getElementById('onlineCount').textContent=data.devices.filter(d=>d.online).length+' / 5';document.getElementById('onCount').textContent=data.devices.filter(d=>d.switch===true).length;
+document.getElementById('totalPower').textContent=fmt(data.devices.reduce((s,d)=>s+(Number(d.metrics?.power)||0),0))+' Вт';document.getElementById('updated').textContent='Обновлено: '+new Date(data.updated_at).toLocaleTimeString('ru-RU');
+}catch(e){toast('Ошибка обновления: '+e.message);document.getElementById('updated').textContent='Не удалось обновить';}finally{busy=false;}}
+async function switchOne(i,on){await command('/api/devices/'+i+'/switch',{on},on?'Команда включения отправлена':'Команда выключения отправлена');}
+async function switchAll(on){if(!confirm((on?'Включить':'Выключить')+' все пять реле?'))return;await command('/api/switch-all',{on},on?'Команда включения отправлена':'Команда выключения отправлена');}
+async function command(url,body,success){try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),data=await r.json();if(!r.ok||data.success===false){const failed=(data.results||[]).filter(x=>!x.success);throw Error(failed.length?failed.map(x=>x.name+': '+x.error).join('; '):(data.error||'Команда не выполнена'));}toast(success);setTimeout(loadData,700);}catch(e){toast('Ошибка: '+e.message);}}
+loadData();setInterval(loadData,10000);
+</script></body></html>
